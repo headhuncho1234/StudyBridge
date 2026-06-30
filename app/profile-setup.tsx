@@ -32,7 +32,7 @@ import {
   MAJOR_GROUPS,
 } from '../lib/schoolMatching';
 import { getSavedSchoolIds, toggleSchoolSaved } from '../lib/savedSchools';
-import { saveSearch } from '../lib/savedSearches';
+import { saveSearch, updateSearchResults } from '../lib/savedSearches';
 import { isEligible, getMatchPercent, getMatchTier, matchesDemographic } from '../lib/matching';
 
 const MAJORS = MAJOR_GROUPS.flatMap((group) => group.options);
@@ -217,6 +217,8 @@ export default function ProfileSetupScreen() {
   const [savingSearch, setSavingSearch] = useState(false);
   const [searchSaved, setSearchSaved] = useState(false);
   const [relaxedNotice, setRelaxedNotice] = useState<string | null>(null);
+  const [isViewingSavedSearch, setIsViewingSavedSearch] = useState(false);
+  const [activeSavedSearchId, setActiveSavedSearchId] = useState<string | null>(null);
 
   const [recommendedScholarships, setRecommendedScholarships] = useState<RecommendedScholarship[]>([]);
   const [aiExplanations, setAiExplanations] = useState<Record<string, string>>({});
@@ -318,7 +320,7 @@ export default function ProfileSetupScreen() {
     { context: (c) => ({ ...c, campusSize: null, maxBudget: null, preferredLocations: [] }), notice: 'campus size, budget, and location' },
   ];
 
-  const runMatching = async (context: MatchContext) => {
+  const runMatching = async (context: MatchContext): Promise<{ schools: SchoolMatch[]; scholarships: RecommendedScholarship[] } | null> => {
     setResultsLoading(true);
     setResultsError(null);
     setRelaxedNotice(null);
@@ -383,25 +385,26 @@ export default function ProfileSetupScreen() {
     if (fetchError) {
       setResultsError(fetchError.message);
       setResults([]);
-    } else {
-      setRelaxedNotice(appliedNotice);
-
-      const matches = schools
-        .map((school) => {
-          const matchPercent = getSchoolMatchPercent(school, successContext);
-          return {
-            ...school,
-            matchPercent,
-            matchTier: getSchoolMatchTier(matchPercent),
-            whyMatch: getWhyThisMatch(school, successContext),
-          };
-        })
-        .sort((a, b) => b.matchPercent - a.matchPercent)
-        .slice(0, 10);
-
-      setResults(matches);
-      loadAiExplanations(matches, successContext);
+      return null;
     }
+
+    setRelaxedNotice(appliedNotice);
+
+    const matches = schools
+      .map((school) => {
+        const matchPercent = getSchoolMatchPercent(school, successContext);
+        return {
+          ...school,
+          matchPercent,
+          matchTier: getSchoolMatchTier(matchPercent),
+          whyMatch: getWhyThisMatch(school, successContext),
+        };
+      })
+      .sort((a, b) => b.matchPercent - a.matchPercent)
+      .slice(0, 10);
+
+    setResults(matches);
+    loadAiExplanations(matches, successContext);
 
     setSearchSaved(false);
 
@@ -444,6 +447,8 @@ export default function ProfileSetupScreen() {
       .slice(0, 5);
 
     setRecommendedScholarships(recommended);
+
+    return { schools: matches, scholarships: recommended };
   };
 
   useEffect(() => {
@@ -459,7 +464,7 @@ export default function ProfileSetupScreen() {
       if (savedSearchId) {
         const { data: search } = await supabase
           .from('saved_searches')
-          .select('answers, results_count')
+          .select('answers, results_count, match_results')
           .eq('id', savedSearchId)
           .maybeSingle();
 
@@ -478,9 +483,24 @@ export default function ProfileSetupScreen() {
           setHardConstraints((answers.hardConstraints as string) ?? '');
           setLoading(false);
 
+          const cachedResults = search.match_results as {
+            schools: SchoolMatch[];
+            scholarships: RecommendedScholarship[];
+          } | null;
+
+          if (cachedResults?.schools) {
+            setResults(cachedResults.schools);
+            setRecommendedScholarships(cachedResults.scholarships ?? []);
+            setSearchSaved(true);
+            setIsViewingSavedSearch(true);
+            setActiveSavedSearchId(savedSearchId);
+            return;
+          }
+
           const savedEnrollmentType = (answers.enrollmentType as string) ?? null;
           const savedGpaRange = (answers.gpaRange as string) ?? null;
 
+          setActiveSavedSearchId(savedSearchId);
           await runMatching({
             major: (answers.major as string) ?? null,
             preferredLocations: (answers.preferredLocations as string[]) ?? [],
@@ -491,6 +511,7 @@ export default function ProfileSetupScreen() {
             gpaValue: savedGpaRange ? GPA_RANGE_VALUES[savedGpaRange] ?? null : null,
             degreeLevel: savedEnrollmentType ? ENROLLMENT_TYPE_DEGREE_LEVELS[savedEnrollmentType] ?? null : null,
           });
+          setIsViewingSavedSearch(true);
           return;
         }
       }
@@ -627,7 +648,7 @@ export default function ProfileSetupScreen() {
       return;
     }
 
-    await runMatching({
+    const matchData = await runMatching({
       major,
       preferredLocations,
       maxBudget,
@@ -637,14 +658,9 @@ export default function ProfileSetupScreen() {
       gpaValue,
       degreeLevel,
     });
-  };
 
-  const handleSaveSearch = async () => {
-    if (!results) return;
-    setSavingSearch(true);
-
-    const { error: saveSearchError } = await saveSearch(
-      {
+    if (matchData) {
+      const answers = {
         country,
         major,
         gpaRange,
@@ -656,8 +672,72 @@ export default function ProfileSetupScreen() {
         demographics,
         admissionTimeline,
         hardConstraints,
-      },
-      results.length
+      };
+      const { id: newSearchId } = await saveSearch(
+        answers,
+        matchData.schools.length,
+        {
+          schools: matchData.schools as unknown as Record<string, unknown>[],
+          scholarships: matchData.scholarships as unknown as Record<string, unknown>[],
+        }
+      );
+      setSearchSaved(true);
+      if (newSearchId) setActiveSavedSearchId(newSearchId);
+    }
+  };
+
+  const handleRerunSearch = async () => {
+    setIsViewingSavedSearch(false);
+    setSearchSaved(false);
+
+    const degreeLevel = enrollmentType ? ENROLLMENT_TYPE_DEGREE_LEVELS[enrollmentType] : null;
+    const gpaValue = gpaRange ? GPA_RANGE_VALUES[gpaRange] : null;
+
+    const matchData = await runMatching({
+      major,
+      preferredLocations,
+      maxBudget,
+      campusSize,
+      demographics,
+      country,
+      gpaValue,
+      degreeLevel,
+    });
+
+    if (matchData && activeSavedSearchId) {
+      await updateSearchResults(activeSavedSearchId, matchData.schools.length, {
+        schools: matchData.schools as unknown as Record<string, unknown>[],
+        scholarships: matchData.scholarships as unknown as Record<string, unknown>[],
+      });
+      setSearchSaved(true);
+    }
+  };
+
+  const handleSaveSearch = async () => {
+    if (!results) return;
+    setSavingSearch(true);
+
+    const answers = {
+      country,
+      major,
+      gpaRange,
+      enrollmentType,
+      extracurriculars,
+      preferredLocations,
+      maxBudget,
+      campusSize,
+      demographics,
+      admissionTimeline,
+      hardConstraints,
+    };
+
+    const { error: saveSearchError } = await saveSearch(
+      answers,
+      results.length,
+      {
+        schools: results as unknown as Record<string, unknown>[],
+        scholarships: recommendedScholarships as unknown as Record<string, unknown>[],
+      }
     );
 
     setSavingSearch(false);
@@ -709,20 +789,33 @@ export default function ProfileSetupScreen() {
             <Text style={styles.greeting}>Smart Matching</Text>
             <Text style={styles.heading}>Your Matches</Text>
 
-            <TouchableOpacity
-              style={[styles.secondaryButton, (savingSearch || searchSaved) && styles.buttonDisabled]}
-              onPress={handleSaveSearch}
-              disabled={savingSearch || searchSaved}
-              activeOpacity={0.8}
-            >
-              {savingSearch ? (
-                <ActivityIndicator color={theme.textPrimary} />
+            <View style={styles.resultsActionRow}>
+              {isViewingSavedSearch ? (
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={handleRerunSearch}
+                  disabled={resultsLoading}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.secondaryButtonText}>↻ Re-run Search</Text>
+                </TouchableOpacity>
               ) : (
-                <Text style={styles.secondaryButtonText}>
-                  {searchSaved ? '✓ Search Saved' : 'Save This Search'}
-                </Text>
+                <TouchableOpacity
+                  style={[styles.secondaryButton, (savingSearch || searchSaved) && styles.buttonDisabled]}
+                  onPress={handleSaveSearch}
+                  disabled={savingSearch || searchSaved}
+                  activeOpacity={0.8}
+                >
+                  {savingSearch ? (
+                    <ActivityIndicator color={theme.textPrimary} />
+                  ) : (
+                    <Text style={styles.secondaryButtonText}>
+                      {searchSaved ? '✓ Search Saved' : 'Save This Search'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            </View>
 
             {resultsLoading && <ActivityIndicator color={theme.textSecondary} style={styles.stateIndicator} />}
 
@@ -1547,6 +1640,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.textPrimary,
     lineHeight: 19,
+  },
+  resultsActionRow: {
+    marginBottom: 16,
   },
   resultsSectionTitle: {
     fontSize: 14,

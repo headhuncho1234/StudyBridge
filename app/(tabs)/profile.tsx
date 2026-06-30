@@ -19,12 +19,9 @@ import GradientBackground from '../../components/GradientBackground';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { getCountryFlag } from '../../lib/countryFlags';
 import { School } from '../../lib/schoolMatching';
-
-const settingsItems = [
-  { icon: '🔔', label: 'Notifications' },
-  { icon: '🔒', label: 'Privacy & Security' },
-  { icon: '❓', label: 'Help & Support' },
-];
+import { getSavedIds } from '../../lib/savedScholarships';
+import { getSavedSchoolIds } from '../../lib/savedSchools';
+import { listSavedSearches } from '../../lib/savedSearches';
 
 const DEGREE_LEVEL_LABELS: Record<string, string> = {
   undergraduate: 'Undergraduate',
@@ -65,6 +62,12 @@ type Post = {
   created_at: string;
 };
 
+type DocStats = {
+  complete: number;
+  inProgress: number;
+  needed: number;
+};
+
 function getInitials(fullName: string | null): string {
   if (!fullName?.trim()) return 'SB';
   const parts = fullName.trim().split(/\s+/);
@@ -96,6 +99,21 @@ export default function ProfileScreen() {
   const [postsError, setPostsError] = useState<string | null>(null);
 
   const [settingsExpanded, setSettingsExpanded] = useState(false);
+
+  // Saved items summary
+  const [savedScholarshipCount, setSavedScholarshipCount] = useState(0);
+  const [savedSchoolCount, setSavedSchoolCount] = useState(0);
+  const [savedSearchCount, setSavedSearchCount] = useState(0);
+
+  // Document stats
+  const [docStats, setDocStats] = useState<DocStats>({ complete: 0, inProgress: 0, needed: 0 });
+
+  // Change password modal
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,13 +201,60 @@ export default function ProfileScreen() {
     }, [])
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+
+      Promise.all([
+        getSavedIds(),
+        getSavedSchoolIds(),
+        listSavedSearches(),
+      ]).then(([scholarshipIds, schoolIds, searches]) => {
+        if (cancelled) return;
+        setSavedScholarshipCount(scholarshipIds.length);
+        setSavedSchoolCount(schoolIds.size);
+        setSavedSearchCount(searches.length);
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+
+      supabase.auth.getUser().then(async ({ data: userData }) => {
+        const user = userData.user;
+        if (!user) return;
+
+        const { data } = await supabase
+          .from('application_documents')
+          .select('status')
+          .eq('user_id', user.id);
+
+        if (cancelled || !data) return;
+
+        const stats: DocStats = { complete: 0, inProgress: 0, needed: 0 };
+        for (const doc of data) {
+          if (doc.status === 'complete') stats.complete++;
+          else if (doc.status === 'in-progress') stats.inProgress++;
+          else stats.needed++;
+        }
+        setDocStats(stats);
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.replace('/');
-  };
-
-  const showComingSoon = (label: string) => {
-    Alert.alert(label, 'Coming soon');
   };
 
   const handlePickAvatar = async () => {
@@ -200,7 +265,7 @@ export default function ProfileScreen() {
 
     if (error) {
       setUploadingAvatar(false);
-      Alert.alert('Couldn’t update photo', error);
+      Alert.alert("Couldn't update photo", error);
       return;
     }
 
@@ -212,7 +277,7 @@ export default function ProfileScreen() {
 
       if (updateError) {
         setUploadingAvatar(false);
-        Alert.alert('Couldn’t save photo', updateError.message);
+        Alert.alert("Couldn't save photo", updateError.message);
         return;
       }
 
@@ -265,6 +330,48 @@ export default function ProfileScreen() {
     persistDreamSchools(next);
   };
 
+  const handleChangePassword = async () => {
+    setPasswordError(null);
+
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+
+    setChangingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setChangingPassword(false);
+
+    if (error) {
+      setPasswordError(error.message);
+      return;
+    }
+
+    setShowChangePassword(false);
+    setNewPassword('');
+    setConfirmPassword('');
+    Alert.alert('Password Updated', 'Your password has been changed successfully.');
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'To permanently delete your account and all data, please email support@studybridge.app with the subject "Account Deletion Request".',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out Now',
+          style: 'destructive',
+          onPress: handleSignOut,
+        },
+      ]
+    );
+  };
+
   const filteredSchools = allSchools.filter((school) =>
     school.name.toLowerCase().includes(schoolSearch.toLowerCase().trim())
   );
@@ -275,6 +382,8 @@ export default function ProfileScreen() {
     { label: 'Enrollment', value: profile?.enrollment_type ?? 'Add type' },
     { label: 'Timeline', value: profile?.admission_timeline ?? 'Add timeline' },
   ];
+
+  const totalDocs = docStats.complete + docStats.inProgress + docStats.needed;
 
   if (loading) {
     return (
@@ -356,12 +465,13 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Academic badges — tap to edit-academic */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgeRow} contentContainerStyle={styles.badgeRowContent}>
           {academicBadges.map((badge) => (
             <TouchableOpacity
               key={badge.label}
               style={styles.badge}
-              onPress={() => router.push('/profile-setup')}
+              onPress={() => router.push('/profile/edit-academic')}
               activeOpacity={0.8}
             >
               <Text style={styles.badgeLabel}>{badge.label}</Text>
@@ -398,6 +508,77 @@ export default function ProfileScreen() {
             )
           )}
         </View>
+
+        {/* Saved items summary */}
+        <Text style={styles.sectionTitle}>My Saved Items</Text>
+        <TouchableOpacity
+          style={styles.summaryCard}
+          onPress={() => router.push('/(tabs)/saved')}
+          activeOpacity={0.8}
+        >
+          <View style={styles.summaryRow}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryCount}>{savedScholarshipCount}</Text>
+              <Text style={styles.summaryLabel}>Scholarships</Text>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryCount}>{savedSchoolCount}</Text>
+              <Text style={styles.summaryLabel}>Schools</Text>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryCount}>{savedSearchCount}</Text>
+              <Text style={styles.summaryLabel}>Searches</Text>
+            </View>
+          </View>
+          <Text style={styles.summaryChevron}>View All ›</Text>
+        </TouchableOpacity>
+
+        {/* Document tracker summary */}
+        <Text style={styles.sectionTitle}>Application Documents 📄</Text>
+        <TouchableOpacity
+          style={styles.summaryCard}
+          onPress={() => router.push('/(tabs)/documents')}
+          activeOpacity={0.8}
+        >
+          {totalDocs === 0 ? (
+            <Text style={styles.cardBody}>No documents tracked yet. Tap to start tracking.</Text>
+          ) : (
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryItem}>
+                <Text style={[styles.summaryCount, styles.summaryCountComplete]}>{docStats.complete}</Text>
+                <Text style={styles.summaryLabel}>Complete</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryItem}>
+                <Text style={[styles.summaryCount, styles.summaryCountInProgress]}>{docStats.inProgress}</Text>
+                <Text style={styles.summaryLabel}>In Progress</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryItem}>
+                <Text style={[styles.summaryCount, styles.summaryCountNeeded]}>{docStats.needed}</Text>
+                <Text style={styles.summaryLabel}>Needed</Text>
+              </View>
+            </View>
+          )}
+          <Text style={styles.summaryChevron}>Manage ›</Text>
+        </TouchableOpacity>
+
+        {/* Smart Matching */}
+        <Text style={styles.sectionTitle}>Smart Matching 🎯</Text>
+        <TouchableOpacity
+          style={styles.summaryCard}
+          onPress={() => router.push('/profile-setup')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.cardBody}>
+            {savedSearchCount > 0
+              ? `${savedSearchCount} saved search${savedSearchCount > 1 ? 'es' : ''}. Tap to run a new search or view saved results.`
+              : 'Find your perfect university and scholarship matches.'}
+          </Text>
+          <Text style={styles.summaryChevron}>Start ›</Text>
+        </TouchableOpacity>
 
         <Text style={styles.sectionTitle}>My Posts</Text>
 
@@ -452,18 +633,51 @@ export default function ProfileScreen() {
         {settingsExpanded && (
           <>
             <View style={styles.card}>
-              {settingsItems.map((item, index) => (
-                <TouchableOpacity
-                  key={item.label}
-                  style={[styles.menuItem, index === settingsItems.length - 1 && styles.rowLast]}
-                  activeOpacity={0.7}
-                  onPress={() => showComingSoon(item.label)}
-                >
-                  <Text style={styles.rowIcon}>{item.icon}</Text>
-                  <Text style={styles.menuLabel}>{item.label}</Text>
-                  <Text style={styles.menuChevron}>›</Text>
-                </TouchableOpacity>
-              ))}
+              <TouchableOpacity
+                style={styles.menuItem}
+                activeOpacity={0.7}
+                onPress={() => Alert.alert('Notifications', 'Notification settings coming soon.')}
+              >
+                <Text style={styles.rowIcon}>🔔</Text>
+                <Text style={styles.menuLabel}>Notifications</Text>
+                <Text style={styles.menuChevron}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.menuItem}
+                activeOpacity={0.7}
+                onPress={() => Alert.alert('Privacy & Security', 'Privacy settings coming soon.')}
+              >
+                <Text style={styles.rowIcon}>🔒</Text>
+                <Text style={styles.menuLabel}>Privacy & Security</Text>
+                <Text style={styles.menuChevron}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.menuItem}
+                activeOpacity={0.7}
+                onPress={() => setShowChangePassword(true)}
+              >
+                <Text style={styles.rowIcon}>🔑</Text>
+                <Text style={styles.menuLabel}>Change Password</Text>
+                <Text style={styles.menuChevron}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.menuItem}
+                activeOpacity={0.7}
+                onPress={() => Alert.alert('Help & Support', 'Email us at support@studybridge.app for help.')}
+              >
+                <Text style={styles.rowIcon}>❓</Text>
+                <Text style={styles.menuLabel}>Help & Support</Text>
+                <Text style={styles.menuChevron}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.menuItem, styles.rowLast]}
+                activeOpacity={0.7}
+                onPress={handleDeleteAccount}
+              >
+                <Text style={styles.rowIcon}>🗑️</Text>
+                <Text style={[styles.menuLabel, styles.destructiveLabel]}>Delete Account</Text>
+                <Text style={styles.menuChevron}>›</Text>
+              </TouchableOpacity>
             </View>
 
             <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut} activeOpacity={0.8}>
@@ -473,6 +687,7 @@ export default function ProfileScreen() {
         )}
       </ScrollView>
 
+      {/* School picker modal */}
       <Modal
         visible={schoolPickerSlot != null}
         animationType="slide"
@@ -507,6 +722,68 @@ export default function ProfileScreen() {
               )}
             </ScrollView>
             <Pressable style={styles.cancelButton} onPress={() => setSchoolPickerSlot(null)}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Change password modal */}
+      <Modal
+        visible={showChangePassword}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowChangePassword(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setShowChangePassword(false)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Change Password</Text>
+
+            <Text style={styles.passwordLabel}>New Password</Text>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="At least 8 characters"
+              placeholderTextColor="rgba(255, 255, 255, 0.4)"
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.passwordLabel}>Confirm New Password</Text>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Repeat new password"
+              placeholderTextColor="rgba(255, 255, 255, 0.4)"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+
+            {passwordError && (
+              <Text style={styles.passwordError}>{passwordError}</Text>
+            )}
+
+            <TouchableOpacity
+              style={[styles.passwordSaveButton, changingPassword && { opacity: 0.6 }]}
+              onPress={handleChangePassword}
+              disabled={changingPassword}
+              activeOpacity={0.8}
+            >
+              {changingPassword ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.passwordSaveText}>Update Password</Text>
+              )}
+            </TouchableOpacity>
+
+            <Pressable style={styles.cancelButton} onPress={() => {
+              setShowChangePassword(false);
+              setNewPassword('');
+              setConfirmPassword('');
+              setPasswordError(null);
+            }}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </Pressable>
           </Pressable>
@@ -738,6 +1015,54 @@ const styles = StyleSheet.create({
     color: theme.accent,
     textAlign: 'center',
   },
+  summaryCard: {
+    backgroundColor: theme.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.cardBorder,
+    padding: 20,
+    ...theme.shadow,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: theme.border,
+  },
+  summaryCount: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: theme.textPrimary,
+  },
+  summaryCountComplete: {
+    color: '#4ADE80',
+  },
+  summaryCountInProgress: {
+    color: '#FACC15',
+  },
+  summaryCountNeeded: {
+    color: theme.textSecondary,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: theme.textSecondary,
+    marginTop: 2,
+  },
+  summaryChevron: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.accent,
+    textAlign: 'right',
+  },
   card: {
     backgroundColor: theme.card,
     borderRadius: 20,
@@ -756,6 +1081,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.textSecondary,
     lineHeight: 19,
+    marginBottom: 8,
   },
   postCard: {
     backgroundColor: theme.card,
@@ -839,6 +1165,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: theme.textPrimary,
   },
+  destructiveLabel: {
+    color: '#F87171',
+  },
   menuChevron: {
     fontSize: 20,
     color: theme.accent,
@@ -912,5 +1241,38 @@ const styles = StyleSheet.create({
     color: theme.textSecondary,
     fontSize: 15,
     fontWeight: '600',
+  },
+  passwordLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.textSecondary,
+    marginBottom: 6,
+    marginTop: 12,
+  },
+  passwordInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: theme.textPrimary,
+  },
+  passwordError: {
+    fontSize: 13,
+    color: '#F87171',
+    marginTop: 10,
+    fontWeight: '600',
+  },
+  passwordSaveButton: {
+    backgroundColor: theme.accent,
+    borderRadius: 30,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  passwordSaveText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.accentText,
   },
 });
