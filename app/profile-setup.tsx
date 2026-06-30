@@ -221,6 +221,7 @@ export default function ProfileSetupScreen() {
   const [activeSavedSearchId, setActiveSavedSearchId] = useState<string | null>(null);
 
   const [recommendedScholarships, setRecommendedScholarships] = useState<RecommendedScholarship[]>([]);
+  const [allEligibleScholarships, setAllEligibleScholarships] = useState<RecommendedScholarship[]>([]);
   const [aiExplanations, setAiExplanations] = useState<Record<string, string>>({});
   const [aiExplanationsLoading, setAiExplanationsLoading] = useState<Set<string>>(new Set());
 
@@ -425,7 +426,7 @@ export default function ProfileSetupScreen() {
       gpa: context.gpaValue,
     };
 
-    const recommended = (scholarships ?? [])
+    const allEligible = (scholarships ?? [])
       .filter((scholarship) => isEligible(scholarship, matchProfile, today))
       .map((scholarship) => {
         const matchPercent = getMatchPercent(scholarship, matchProfile);
@@ -444,11 +445,12 @@ export default function ProfileSetupScreen() {
         if (a.isDemographicMatch !== b.isDemographicMatch) return a.isDemographicMatch ? -1 : 1;
         return b.matchPercent - a.matchPercent;
       })
-      .slice(0, 5);
+      .slice(0, 20);
 
-    setRecommendedScholarships(recommended);
+    setAllEligibleScholarships(allEligible);
+    setRecommendedScholarships(allEligible.slice(0, 5));
 
-    return { schools: matches, scholarships: recommended };
+    return { schools: matches, scholarships: allEligible };
   };
 
   useEffect(() => {
@@ -490,7 +492,8 @@ export default function ProfileSetupScreen() {
 
           if (cachedResults?.schools) {
             setResults(cachedResults.schools);
-            setRecommendedScholarships(cachedResults.scholarships ?? []);
+            setAllEligibleScholarships(cachedResults.scholarships ?? []);
+            setRecommendedScholarships((cachedResults.scholarships ?? []).slice(0, 5));
             setSearchSaved(true);
             setIsViewingSavedSearch(true);
             setActiveSavedSearchId(savedSearchId);
@@ -849,7 +852,7 @@ export default function ProfileSetupScreen() {
               !resultsError &&
               results.map((item) => {
                 const isExpanded = expandedSchoolId === item.id;
-                const schoolScholarships = item.scholarships ?? [];
+                const schoolScholarships = allEligibleScholarships.slice(0, 3);
                 const isSaved = savedSchoolIds.has(item.id);
 
                 return (
@@ -915,20 +918,28 @@ export default function ProfileSetupScreen() {
                     {isExpanded && (
                       <View style={styles.scholarshipList}>
                         {schoolScholarships.length === 0 && (
-                          <Text style={styles.cardBody}>No school-specific scholarships listed yet.</Text>
+                          <Text style={styles.cardBody}>No scholarships matched your profile yet.</Text>
                         )}
-                        {schoolScholarships.map((scholarship, index) => (
-                          <View key={`${item.id}-${index}`} style={styles.scholarshipRow}>
-                            <Text style={styles.scholarshipName}>{scholarship.name ?? 'Scholarship'}</Text>
+                        {schoolScholarships.map((scholarship) => (
+                          <TouchableOpacity
+                            key={scholarship.id}
+                            style={styles.scholarshipRow}
+                            onPress={() => router.push({ pathname: '/scholarship/[id]', params: { id: scholarship.id } })}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.scholarshipName}>{scholarship.title}</Text>
                             <View style={styles.scholarshipMetaRow}>
-                              {scholarship.amount && (
+                              {scholarship.amount ? (
                                 <Text style={styles.scholarshipMeta}>{scholarship.amount}</Text>
-                              )}
-                              {scholarship.deadline && (
-                                <Text style={styles.scholarshipMeta}>Due {scholarship.deadline}</Text>
-                              )}
+                              ) : null}
+                              <Text style={styles.scholarshipMeta}>Due {formatScholarshipDeadline(scholarship.deadline)}</Text>
                             </View>
-                          </View>
+                            {scholarship.matchTier ? (
+                              <View style={styles.scholarshipTierBadge}>
+                                <Text style={styles.scholarshipTierText}>{scholarship.matchTier}</Text>
+                              </View>
+                            ) : null}
+                          </TouchableOpacity>
                         ))}
                         <TouchableOpacity onPress={() => router.push('/search')} activeOpacity={0.8}>
                           <Text style={styles.viewAllLink}>View All Scholarships ›</Text>
@@ -1606,6 +1617,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.accent,
     marginTop: 10,
+  },
+  scholarshipTierBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: theme.accent,
+    borderRadius: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    marginTop: 6,
+  },
+  scholarshipTierText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: theme.accentText,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
   aiExplanationBox: {
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
