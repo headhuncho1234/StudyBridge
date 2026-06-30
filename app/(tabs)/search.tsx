@@ -24,6 +24,8 @@ type Scholarship = {
   provider: string;
   amount: string;
   deadline: string;
+  application_difficulty: string | null;
+  eligibility: string | null;
 };
 
 function formatDeadline(deadline: string) {
@@ -75,7 +77,7 @@ export default function SearchScreen() {
 
       let request = supabase
         .from('scholarships')
-        .select('id, title, provider, amount, deadline')
+        .select('id, title, provider, amount, deadline, application_difficulty, eligibility')
         .gte('deadline', today)
         .order('deadline', { ascending: true });
 
@@ -151,34 +153,52 @@ export default function SearchScreen() {
 
           {!loading &&
             !error &&
-            scholarships.map((item) => (
-              <Pressable
-                key={item.id}
-                style={styles.resultCard}
-                onPress={() => router.push({ pathname: '/scholarship/[id]', params: { id: item.id } })}
-              >
-                <View style={styles.resultHeader}>
-                  <Text style={[styles.resultTitle, styles.resultTitleText]}>{item.title}</Text>
-                  <Pressable
-                    onPress={(event) => handleToggleSaved(item.id, event)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons
-                      name={savedIds.has(item.id) ? 'bookmark' : 'bookmark-outline'}
-                      size={20}
-                      color={theme.accent}
-                    />
-                  </Pressable>
-                </View>
-                <Text style={styles.resultOrg}>{item.provider}</Text>
-                <View style={styles.resultMeta}>
-                  <View style={styles.metaPill}>
-                    <Text style={styles.metaPillText}>{item.amount}</Text>
+            scholarships.map((item) => {
+              const tip = (() => {
+                const d = item.application_difficulty;
+                if (d === 'high') return 'Highly competitive — start 3 months early, line up strong references, and tailor every essay.';
+                if (d === 'medium') return 'Moderate competition — prepare a compelling personal statement and apply before the deadline.';
+                if (d === 'low') return "Lower competition — a strong application stands out; don't skip optional essay sections.";
+                return 'Apply early — many awards close before the posted deadline.';
+              })();
+              const eligibilitySnippet = item.eligibility
+                ? item.eligibility.slice(0, 100) + (item.eligibility.length > 100 ? '…' : '')
+                : null;
+
+              return (
+                <Pressable
+                  key={item.id}
+                  style={styles.resultCard}
+                  onPress={() => router.push({ pathname: '/scholarship/[id]', params: { id: item.id } })}
+                >
+                  <View style={styles.resultHeader}>
+                    <Text style={[styles.resultTitle, styles.resultTitleText]}>{item.title}</Text>
+                    <Pressable
+                      onPress={(event) => handleToggleSaved(item.id, event)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name={savedIds.has(item.id) ? 'bookmark' : 'bookmark-outline'}
+                        size={20}
+                        color={theme.accent}
+                      />
+                    </Pressable>
                   </View>
-                  <Text style={styles.resultDeadline}>Due {formatDeadline(item.deadline)}</Text>
-                </View>
-              </Pressable>
-            ))}
+                  <Text style={styles.resultOrg}>{item.provider}</Text>
+                  <View style={styles.resultMeta}>
+                    <View style={styles.metaPill}>
+                      <Text style={styles.metaPillText}>{item.amount}</Text>
+                    </View>
+                    <Text style={styles.resultDeadline}>Due {formatDeadline(item.deadline)}</Text>
+                  </View>
+                  {eligibilitySnippet && (
+                    <Text style={styles.resultEligibility}>{eligibilitySnippet}</Text>
+                  )}
+                  <Text style={styles.resultTip}>💡 {tip}</Text>
+                  <Text style={styles.resultApplyLink}>Tap to view & apply →</Text>
+                </Pressable>
+              );
+            })}
         </ScrollView>
       </TouchableWithoutFeedback>
     </GradientBackground>
@@ -309,5 +329,24 @@ const styles = StyleSheet.create({
   resultDeadline: {
     fontSize: 12,
     color: theme.textSecondary,
+  },
+  resultEligibility: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    marginTop: 8,
+    lineHeight: 17,
+  },
+  resultTip: {
+    fontSize: 12,
+    color: theme.accent,
+    marginTop: 6,
+    lineHeight: 17,
+    fontStyle: 'italic',
+  },
+  resultApplyLink: {
+    fontSize: 12,
+    color: theme.accent,
+    fontWeight: '700',
+    marginTop: 8,
   },
 });

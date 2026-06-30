@@ -193,6 +193,19 @@ export default function ScholarshipDetailScreen() {
             </View>
           )}
 
+          {scholarship.application_difficulty && (
+            <View style={[styles.section, styles.tipSection]}>
+              <Text style={styles.sectionTitle}>Application Tip</Text>
+              <Text style={styles.tipBody}>
+                {scholarship.application_difficulty === 'high'
+                  ? '🔥 Highly competitive — start at least 3 months early, line up strong references, and tailor every essay to this specific program.'
+                  : scholarship.application_difficulty === 'medium'
+                  ? '⚡ Moderate competition — prepare a compelling personal statement and submit well before the deadline.'
+                  : '✅ Lower competition — a polished, complete application stands out; don\'t skip optional sections.'}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Details</Text>
             <View style={styles.detailsCard}>
@@ -360,6 +373,16 @@ const styles = StyleSheet.create({
   sectionBody: {
     fontSize: 14,
     color: theme.textPrimary,
+    lineHeight: 22,
+  },
+  tipSection: {
+    backgroundColor: 'rgba(232, 200, 74, 0.1)',
+    borderRadius: 16,
+    padding: 16,
+  },
+  tipBody: {
+    fontSize: 14,
+    color: theme.accent,
     lineHeight: 22,
   },
   detailsCard: {

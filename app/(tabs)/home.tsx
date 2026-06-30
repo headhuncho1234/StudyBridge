@@ -18,6 +18,8 @@ type Scholarship = {
   eligible_countries: string[] | null;
   eligible_majors: string[] | null;
   min_gpa: number | null;
+  application_difficulty: string | null;
+  eligibility: string | null;
 };
 
 type ScholarshipMatch = Scholarship & { matchPercent: number; matchTier: string | null };
@@ -92,7 +94,17 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function getScholarshipTip(diff: string | null): string {
+  if (diff === 'high') return 'Highly competitive — start 3 months early, line up strong references, and tailor every essay.';
+  if (diff === 'medium') return 'Moderate competition — prepare a compelling personal statement and apply before the deadline.';
+  if (diff === 'low') return "Lower competition — a strong application stands out; don't skip optional essay sections.";
+  return 'Apply early — many awards close before the posted deadline.';
+}
+
 function ScholarshipCard({ item, matchTier }: { item: Scholarship; matchTier?: string | null }) {
+  const tip = getScholarshipTip(item.application_difficulty ?? null);
+  const eligibilitySnippet = item.eligibility ? item.eligibility.slice(0, 100) + (item.eligibility.length > 100 ? '…' : '') : null;
+
   return (
     <Pressable
       style={styles.resultCard}
@@ -111,6 +123,11 @@ function ScholarshipCard({ item, matchTier }: { item: Scholarship; matchTier?: s
         )}
         <Text style={styles.resultDeadline}>Due {formatDeadline(item.deadline)}</Text>
       </View>
+      {eligibilitySnippet && (
+        <Text style={styles.resultEligibility}>{eligibilitySnippet}</Text>
+      )}
+      <Text style={styles.resultTip}>💡 {tip}</Text>
+      <Text style={styles.resultApplyLink}>Tap to view & apply →</Text>
     </Pressable>
   );
 }
@@ -201,7 +218,7 @@ export default function HomeScreen() {
     supabase
       .from('scholarships')
       .select(
-        'id, title, provider, amount, deadline, eligible_degree_levels, eligible_countries, eligible_majors, min_gpa'
+        'id, title, provider, amount, deadline, eligible_degree_levels, eligible_countries, eligible_majors, min_gpa, application_difficulty, eligibility'
       )
       .gte('deadline', today)
       .order('deadline', { ascending: true })
@@ -626,6 +643,25 @@ const styles = StyleSheet.create({
   resultDeadline: {
     fontSize: 12,
     color: theme.textSecondary,
+  },
+  resultEligibility: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    marginTop: 8,
+    lineHeight: 17,
+  },
+  resultTip: {
+    fontSize: 12,
+    color: theme.accent,
+    marginTop: 6,
+    lineHeight: 17,
+    fontStyle: 'italic',
+  },
+  resultApplyLink: {
+    fontSize: 12,
+    color: theme.accent,
+    fontWeight: '700',
+    marginTop: 8,
   },
   schoolCard: {
     backgroundColor: theme.card,
