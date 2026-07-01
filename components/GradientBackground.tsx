@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
 import { StyleProp, StyleSheet, ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { theme } from '../lib/theme';
+import { useTheme } from '../lib/ThemeContext';
 
 export default function GradientBackground({
   children,
@@ -10,6 +10,7 @@ export default function GradientBackground({
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
+  const { theme } = useTheme();
   return (
     <LinearGradient
       colors={theme.gradient}
@@ -23,7 +24,5 @@ export default function GradientBackground({
 }
 
 const styles = StyleSheet.create({
-  fill: {
-    flex: 1,
-  },
+  fill: { flex: 1 },
 });

@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../lib/ThemeContext';
+import { Switch } from 'react-native';
 import { theme } from '../../lib/theme';
 import GradientBackground from '../../components/GradientBackground';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
@@ -99,6 +101,7 @@ export default function ProfileScreen() {
   const [postsError, setPostsError] = useState<string | null>(null);
 
   const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const { mode, setMode, isDark } = useTheme();
 
   // Saved items summary
   const [savedScholarshipCount, setSavedScholarshipCount] = useState(0);
@@ -633,6 +636,18 @@ export default function ProfileScreen() {
         {settingsExpanded && (
           <>
             <View style={styles.card}>
+              <View style={styles.menuItem}>
+                <Text style={styles.rowIcon}>{isDark ? '🌙' : '☀️'}</Text>
+                <Text style={styles.menuLabel}>
+                  {mode === 'system' ? 'Appearance (System)' : isDark ? 'Dark Mode' : 'Light Mode'}
+                </Text>
+                <Switch
+                  value={mode === 'system' ? undefined : isDark}
+                  onValueChange={(val) => setMode(val ? 'dark' : 'light')}
+                  trackColor={{ false: 'rgba(255,255,255,0.2)', true: theme.accent }}
+                  thumbColor={isDark ? theme.accent : '#fff'}
+                />
+              </View>
               <TouchableOpacity
                 style={styles.menuItem}
                 activeOpacity={0.7}
