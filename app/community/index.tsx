@@ -638,12 +638,6 @@ export default function CommunityScreen() {
   return (
     <GradientBackground>
       <View style={styles.container}>
-        <Pressable
-          style={styles.backButton}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-        </Pressable>
-
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.greeting}>Connect</Text>
