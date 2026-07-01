@@ -830,9 +830,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-    fontWeight: '600',
-    color: theme.textSecondary,
-  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
