@@ -14,19 +14,19 @@ export default function TabLayout() {
         <Icon sf="house.fill" />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="search">
-        <Label>Search</Label>
-        <Icon sf="magnifyingglass" />
+      <NativeTabs.Trigger name="match">
+        <Label>Match</Label>
+        <Icon sf="sparkles" />
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="community">
+        <Label>Community</Label>
+        <Icon sf="person.3.fill" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="saved">
         <Label>Saved</Label>
         <Icon sf="bookmark.fill" />
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="documents">
-        <Label>Documents</Label>
-        <Icon sf="doc.text.fill" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="profile">
