@@ -639,11 +639,9 @@ export default function CommunityScreen() {
     <GradientBackground>
       <View style={styles.container}>
         <Pressable
-          onPress={() => router.back()}
           style={styles.backButton}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Text style={styles.backButtonText}>‹ Back</Text>
         </Pressable>
 
         <View style={styles.headerRow}>
@@ -844,7 +842,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: 4,
   },
-  backButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: theme.textSecondary,
