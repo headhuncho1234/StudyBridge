@@ -4,6 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { router, useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { theme } from '../../lib/theme';
+import { useTheme } from '../../lib/ThemeContext';
 import GradientBackground from '../../components/GradientBackground';
 import { isEligible, getMatchPercent, getMatchTier } from '../../lib/matching';
 import { listSavedSearches, deleteSavedSearch, SavedSearch } from '../../lib/savedSearches';
@@ -133,6 +134,7 @@ function ScholarshipCard({ item, matchTier }: { item: Scholarship; matchTier?: s
 }
 
 export default function HomeScreen() {
+  const { isDark, toggleMode } = useTheme();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
 
@@ -319,7 +321,24 @@ export default function HomeScreen() {
   return (
     <GradientBackground>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.greeting}>Welcome back 👋</Text>
+
+          <TouchableOpacity
+            onPress={toggleMode}
+            style={{
+              position: 'absolute',
+              top: 52,
+              right: 24,
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ fontSize: 20 }}>{isDark ? '☀️' : '🌙'}</Text>
+          </TouchableOpacity>
+        <Text style={styles.greeting}>Welcome back 👋</Text>
       <Text style={styles.heading}>Your Scholarship Dashboard</Text>
 
       <Pressable style={styles.assistantCard} onPress={() => router.push('/profile-setup')}>
