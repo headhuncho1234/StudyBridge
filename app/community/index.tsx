@@ -836,12 +836,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  backButton: {
-    alignSelf: 'flex-start',
-    paddingTop: 60,
-    paddingHorizontal: 24,
-    paddingBottom: 4,
-  },
     fontSize: 16,
     fontWeight: '600',
     color: theme.textSecondary,
