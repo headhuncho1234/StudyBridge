@@ -101,7 +101,7 @@ export default function ProfileScreen() {
   const [postsError, setPostsError] = useState<string | null>(null);
 
   const [settingsExpanded, setSettingsExpanded] = useState(false);
-  const { mode, setMode, isDark } = useTheme();
+  const { mode, toggleMode, isDark } = useTheme();
 
   // Saved items summary
   const [savedScholarshipCount, setSavedScholarshipCount] = useState(0);
@@ -643,7 +643,7 @@ export default function ProfileScreen() {
                 </Text>
                 <Switch
                   value={mode === 'system' ? undefined : isDark}
-                  onValueChange={(val) => setMode(val ? 'dark' : 'light')}
+                  onValueChange={toggleMode}
                   trackColor={{ false: 'rgba(255,255,255,0.2)', true: theme.accent }}
                   thumbColor={isDark ? theme.accent : '#fff'}
                 />
