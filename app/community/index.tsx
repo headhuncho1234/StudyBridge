@@ -291,6 +291,7 @@ export default function CommunityScreen() {
       user_id: currentUserId,
       university_name: universityName,
       method: 'edu_email',
+      verified_via: 'edu_email',
       anonymous_tag: tag,
       verified_at: new Date().toISOString(),
     });
@@ -343,6 +344,7 @@ export default function CommunityScreen() {
         user_id: currentUserId!,
         university_name: nearest.name,
         method: 'location',
+      verified_via: 'location',
         anonymous_tag: tag,
         verified_at: new Date().toISOString(),
       });
