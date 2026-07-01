@@ -1,6 +1,8 @@
-import { useCallback, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Keyboard,
   Modal,
   Pressable,
@@ -12,6 +14,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { theme } from '../../lib/theme';
@@ -26,6 +29,61 @@ type AppDocument = {
   status: string;
   due_date: string | null;
 };
+
+type StudentType = 'domestic' | 'international' | 'foreign-exchange' | 'transfer';
+
+const STUDENT_TYPES: { value: StudentType; label: string }[] = [
+  { value: 'domestic', label: 'Domestic' },
+  { value: 'international', label: 'International' },
+  { value: 'foreign-exchange', label: 'Exchange' },
+  { value: 'transfer', label: 'Transfer' },
+];
+
+const REQUIRED_DOCS: Record<StudentType, string[]> = {
+  domestic: [
+    'High school/college transcripts',
+    'SAT/ACT scores',
+    'Letters of recommendation',
+    'Personal statement/essay',
+    'FAFSA confirmation',
+    'Financial aid award letters',
+    'Proof of residency',
+    'Social Security Number (for aid)',
+  ],
+  international: [
+    'Passport (valid)',
+    'Academic transcripts (translated)',
+    'English proficiency test (TOEFL/IELTS)',
+    'Financial sponsorship letter',
+    'Bank statements (showing funds)',
+    'Student visa (F-1/J-1)',
+    'I-20 form',
+    'SEVIS fee receipt',
+    'Immunization records',
+    'Health insurance proof',
+    'Emergency contact documentation',
+  ],
+  'foreign-exchange': [
+    'Passport',
+    'DS-2019 form (J-1 visa)',
+    'SEVIS registration',
+    'Exchange program acceptance letter',
+    'Home institution transcript',
+    'Language proficiency proof',
+    'Insurance coverage',
+    'Emergency contact info',
+    'Housing confirmation',
+  ],
+  transfer: [
+    'Official transcripts from all institutions',
+    'Transfer application',
+    'Dean\'s certification letter',
+    'Course descriptions for credit evaluation',
+    'Financial aid transfer documentation',
+  ],
+};
+
+const CHECKLIST_STORAGE_KEY = 'doc_checklist_checked_';
 
 const STATUS_GROUPS: { value: DocumentStatus; label: string }[] = [
   { value: 'needed', label: 'Needed' },
@@ -54,10 +112,24 @@ function getStatusBadgeTextStyle(status: string) {
   return status === 'complete' ? styles.statusBadgeTextComplete : styles.statusBadgeTextDefault;
 }
 
+/** Case-insensitive fuzzy check: does any uploaded doc name contain the checklist item keyword? */
+function isAutoChecked(checklistItem: string, uploadedDocs: AppDocument[]): boolean {
+  const needle = checklistItem.toLowerCase();
+  return uploadedDocs.some((doc) => {
+    const haystack = doc.name.toLowerCase();
+    // Check if either string contains the other (trimmed to first 12 chars for broad matching)
+    const keywords = needle.split(/[\s\/\(\)]+/).filter((w) => w.length > 3);
+    return keywords.some((kw) => haystack.includes(kw));
+  });
+}
+
 export default function DocumentsScreen() {
   const [documents, setDocuments] = useState<AppDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [selectedStudentType, setSelectedStudentType] = useState<StudentType>('domestic');
+  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
 
   const [createVisible, setCreateVisible] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -68,6 +140,47 @@ export default function DocumentsScreen() {
 
   const [statusDoc, setStatusDoc] = useState<AppDocument | null>(null);
   const [statusSaving, setStatusSaving] = useState(false);
+
+  // Load checked state from AsyncStorage when student type changes
+  useEffect(() => {
+    const key = `${CHECKLIST_STORAGE_KEY}${selectedStudentType}`;
+    AsyncStorage.getItem(key).then((raw) => {
+      if (raw) {
+        try {
+          const arr = JSON.parse(raw) as string[];
+          setCheckedItems(new Set(arr));
+        } catch {
+          setCheckedItems(new Set());
+        }
+      } else {
+        setCheckedItems(new Set());
+      }
+    });
+  }, [selectedStudentType]);
+
+  const persistChecked = useCallback(
+    async (next: Set<string>) => {
+      const key = `${CHECKLIST_STORAGE_KEY}${selectedStudentType}`;
+      await AsyncStorage.setItem(key, JSON.stringify(Array.from(next)));
+    },
+    [selectedStudentType]
+  );
+
+  const toggleChecked = useCallback(
+    (item: string) => {
+      setCheckedItems((prev) => {
+        const next = new Set(prev);
+        if (next.has(item)) {
+          next.delete(item);
+        } else {
+          next.add(item);
+        }
+        persistChecked(next);
+        return next;
+      });
+    },
+    [persistChecked]
+  );
 
   const loadDocuments = useCallback(() => {
     let cancelled = false;
@@ -189,6 +302,34 @@ export default function DocumentsScreen() {
     }
   };
 
+  const handleDeleteDocument = useCallback(
+    (doc: AppDocument) => {
+      Alert.alert('Delete document?', 'This cannot be undone.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const { data: userData } = await supabase.auth.getUser();
+            const user = userData.user;
+            if (!user) return;
+
+            const { error: delError } = await supabase
+              .from('application_documents')
+              .delete()
+              .eq('id', doc.id)
+              .eq('user_id', user.id);
+
+            if (!delError) {
+              setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+            }
+          },
+        },
+      ]);
+    },
+    []
+  );
+
   const grouped = STATUS_GROUPS.map((group) => ({
     ...group,
     items: documents.filter((doc) => doc.status === group.value),
@@ -197,6 +338,8 @@ export default function DocumentsScreen() {
   const totalCount = documents.length;
   const completeCount = documents.filter((doc) => doc.status === 'complete').length;
   const progressPercent = totalCount === 0 ? 0 : Math.round((completeCount / totalCount) * 100);
+
+  const checklistItems = REQUIRED_DOCS[selectedStudentType];
 
   return (
     <GradientBackground>
@@ -214,6 +357,68 @@ export default function DocumentsScreen() {
             <TouchableOpacity style={styles.addButton} onPress={() => setCreateVisible(true)} activeOpacity={0.8}>
               <Text style={styles.addButtonText}>+</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Student type selector */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.typeRow}
+            contentContainerStyle={styles.typeRowContent}
+          >
+            {STUDENT_TYPES.map((type) => (
+              <TouchableOpacity
+                key={type.value}
+                style={[styles.typePill, selectedStudentType === type.value && styles.typePillActive]}
+                onPress={() => setSelectedStudentType(type.value)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[styles.typePillText, selectedStudentType === type.value && styles.typePillTextActive]}
+                >
+                  {type.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* Required documents checklist */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Required Documents</Text>
+            </View>
+            <View style={styles.checklistCard}>
+              {checklistItems.map((item, idx) => {
+                const autoChecked = isAutoChecked(item, documents);
+                const manuallyChecked = checkedItems.has(item);
+                const isChecked = autoChecked || manuallyChecked;
+
+                return (
+                  <TouchableOpacity
+                    key={item}
+                    style={[
+                      styles.checklistRow,
+                      idx < checklistItems.length - 1 && styles.checklistRowBorder,
+                    ]}
+                    onPress={() => toggleChecked(item)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
+                      {isChecked && <Text style={styles.checkmark}>✓</Text>}
+                    </View>
+                    <Text style={[styles.checklistItemText, isChecked && styles.checklistItemTextChecked]}>
+                      {item}
+                    </Text>
+                    {autoChecked && <View style={styles.greenDot} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Uploaded documents section */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Your Documents</Text>
           </View>
 
           {loading && <ActivityIndicator color={theme.textSecondary} style={styles.stateIndicator} />}
@@ -262,28 +467,43 @@ export default function DocumentsScreen() {
                     </View>
                   </View>
                   {group.items.map((doc) => (
-                    <Pressable key={doc.id} style={styles.docCard} onPress={() => setStatusDoc(doc)}>
-                      <View style={styles.docTopRow}>
-                        <Text style={styles.docName} numberOfLines={2}>
-                          {doc.name}
-                        </Text>
-                        <View style={[styles.statusBadge, getStatusBadgeStyle(doc.status)]}>
-                          <Text style={[styles.statusBadgeText, getStatusBadgeTextStyle(doc.status)]}>
-                            {STATUS_LABELS[doc.status] ?? doc.status}
-                          </Text>
-                        </View>
-                      </View>
-                      {(doc.doc_type || doc.due_date) && (
-                        <View style={styles.docMetaRow}>
-                          <Text style={styles.docType} numberOfLines={1}>
-                            {doc.doc_type ?? ''}
-                          </Text>
-                          <Text style={styles.docDueDate}>
-                            {doc.due_date ? `Due ${formatDueDate(doc.due_date)}` : ''}
-                          </Text>
-                        </View>
+                    <Swipeable
+                      key={doc.id}
+                      renderRightActions={() => (
+                        <TouchableOpacity
+                          style={styles.deleteAction}
+                          onPress={() => handleDeleteDocument(doc)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.deleteActionText}>Delete</Text>
+                        </TouchableOpacity>
                       )}
-                    </Pressable>
+                      overshootRight={false}
+                    >
+                      <Pressable style={styles.docCard} onPress={() => setStatusDoc(doc)}>
+                        <View style={styles.docTopRow}>
+                          <Text style={styles.docName} numberOfLines={2}>
+                            {doc.name}
+                          </Text>
+                          <View style={[styles.statusBadge, getStatusBadgeStyle(doc.status)]}>
+                            <Text style={[styles.statusBadgeText, getStatusBadgeTextStyle(doc.status)]}>
+                              {STATUS_LABELS[doc.status] ?? doc.status}
+                            </Text>
+                          </View>
+                        </View>
+                        {(doc.doc_type || doc.due_date) && (
+                          <View style={styles.docMetaRow}>
+                            <Text style={styles.docType} numberOfLines={1}>
+                              {doc.doc_type ?? ''}
+                            </Text>
+                            <Text style={styles.docDueDate}>
+                              {doc.due_date ? `Due ${formatDueDate(doc.due_date)}` : ''}
+                            </Text>
+                          </View>
+                        )}
+                        <Text style={styles.swipeHint}>Swipe left to delete</Text>
+                      </Pressable>
+                    </Swipeable>
                   ))}
                 </View>
               )
@@ -379,7 +599,22 @@ export default function DocumentsScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>{statusDoc?.name}</Text>
-              <Text style={styles.label}>Update status</Text>
+
+              <TouchableOpacity
+                style={styles.deleteDocButton}
+                onPress={() => {
+                  const doc = statusDoc;
+                  setStatusDoc(null);
+                  if (doc) {
+                    setTimeout(() => handleDeleteDocument(doc), 300);
+                  }
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteDocButtonText}>🗑 Delete Document</Text>
+              </TouchableOpacity>
+
+              <Text style={[styles.label, { marginTop: 16 }]}>Update status</Text>
 
               {STATUS_GROUPS.map((group) => (
                 <TouchableOpacity
@@ -429,7 +664,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   greeting: {
     fontSize: 16,
@@ -450,6 +685,120 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.accent,
     lineHeight: 30,
+  },
+  typeRow: {
+    flexGrow: 0,
+    marginBottom: 20,
+  },
+  typeRowContent: {
+    gap: 10,
+  },
+  typePill: {
+    backgroundColor: theme.card,
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: theme.cardBorder,
+  },
+  typePillActive: {
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
+  },
+  typePillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.textSecondary,
+  },
+  typePillTextActive: {
+    color: '#0A2463',
+  },
+  section: {
+    marginBottom: 8,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.accent,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginRight: 8,
+  },
+  countBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.textPrimary,
+  },
+  checklistCard: {
+    backgroundColor: theme.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.cardBorder,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  checklistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  checklistRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: theme.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  checkboxChecked: {
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
+  },
+  checkmark: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0A2463',
+    lineHeight: 16,
+  },
+  checklistItemText: {
+    flex: 1,
+    fontSize: 14,
+    color: theme.textPrimary,
+    lineHeight: 19,
+  },
+  checklistItemTextChecked: {
+    color: theme.textSecondary,
+    textDecorationLine: 'line-through',
+  },
+  greenDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4ADE80',
+    flexShrink: 0,
   },
   stateIndicator: {
     marginTop: 24,
@@ -505,7 +854,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.cardBorder,
     padding: 20,
-    marginTop: 16,
+    marginTop: 8,
+    marginBottom: 16,
     ...theme.shadow,
   },
   progressHeader: {
@@ -533,37 +883,6 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 4,
     backgroundColor: theme.textPrimary,
-  },
-  section: {
-    marginBottom: 8,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 24,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: theme.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginRight: 8,
-  },
-  countBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  countBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: theme.textPrimary,
   },
   docCard: {
     backgroundColor: theme.card,
@@ -630,6 +949,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: theme.textSecondary,
+  },
+  swipeHint: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.3)',
+    marginTop: 8,
+  },
+  deleteAction: {
+    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    borderRadius: 20,
+    marginBottom: 14,
+    marginLeft: 8,
+  },
+  deleteActionText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  deleteDocButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    alignItems: 'center',
+  },
+  deleteDocButtonText: {
+    color: '#F87171',
+    fontWeight: '700',
+    fontSize: 14,
   },
   modalOverlay: {
     flex: 1,

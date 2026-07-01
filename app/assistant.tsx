@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -24,14 +24,39 @@ type ChatMessage = {
   content: string;
 };
 
+type UserProfile = {
+  field_of_study: string | null;
+  gpa_range: string | null;
+  country_of_origin: string | null;
+  degree_level: string | null;
+  target_state: string | null;
+};
+
 const STARTER_PROMPTS = [
-  'What documents do I need for F-1 visa?',
-  'Find scholarships for my field of study',
-  "What's the difference between on and off campus housing?",
+  'What schools are the best fit for my profile?',
+  'Help me find scholarships I qualify for',
+  'What documents do I need as an international student?',
+  'Walk me through the application timeline',
+  'What should I know about student visas?',
 ];
+
+const RHETOR_SYSTEM_PROMPT =
+  "You are Rhetor, an AI guide and friend built into this platform to help international and domestic students navigate their journey to U.S. higher education. You're warm, encouraging, and specific — never generic. You know the student's profile and use it to give personalized advice. You help with: school selection, scholarship hunting, visa questions, campus life, application strategy, financial planning, and anything else a student needs. Talk like a knowledgeable older friend, not a corporate chatbot. Never say \"I'm just an AI\" — you are Rhetor, their guide. Always end responses with an encouraging nudge or follow-up question to keep them moving forward.";
 
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function buildProfileContext(profile: UserProfile | null): string {
+  if (!profile) return '';
+  const parts: string[] = [];
+  if (profile.field_of_study) parts.push(`major=${profile.field_of_study}`);
+  if (profile.gpa_range) parts.push(`GPA=${profile.gpa_range}`);
+  if (profile.country_of_origin) parts.push(`country=${profile.country_of_origin}`);
+  if (profile.degree_level) parts.push(`degree=${profile.degree_level}`);
+  if (profile.target_state) parts.push(`target state=${profile.target_state}`);
+  if (parts.length === 0) return '';
+  return `[Student profile: ${parts.join(', ')}]`;
 }
 
 export default function AssistantScreen() {
@@ -39,7 +64,30 @@ export default function AssistantScreen() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+
+  // Fetch user profile on mount for context injection
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getUser().then(async ({ data: userData }) => {
+      const user = userData.user;
+      if (!user || cancelled) return;
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('field_of_study, gpa_range, country_of_origin, degree_level, target_state')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!cancelled && data) {
+        setUserProfile(data as UserProfile);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -54,8 +102,27 @@ export default function AssistantScreen() {
       setError(null);
       setSending(true);
 
+      // Build API messages — inject profile context silently as a system-style prefix
+      const profileContext = buildProfileContext(userProfile);
+      const apiMessages = history.map(({ role, content }) => ({ role, content }));
+
+      // Prepend the profile context to the first user message in the API payload (not shown in UI)
+      let apiPayload: { role: string; content: string }[] = [];
+      if (profileContext) {
+        apiPayload = [
+          { role: 'user', content: profileContext },
+          { role: 'assistant', content: "Got it! I have your profile details and I'll use them to personalize my advice." },
+          ...apiMessages,
+        ];
+      } else {
+        apiPayload = apiMessages;
+      }
+
       const { data, error: invokeError } = await supabase.functions.invoke('ai-assistant', {
-        body: { messages: history.map(({ role, content }) => ({ role, content })) },
+        body: {
+          messages: apiPayload,
+          systemPrompt: RHETOR_SYSTEM_PROMPT,
+        },
       });
 
       setSending(false);
@@ -72,9 +139,12 @@ export default function AssistantScreen() {
         return;
       }
 
-      setMessages((prev) => [...prev, { id: generateId(), role: 'assistant', content: result?.reply ?? '' }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: generateId(), role: 'assistant', content: result?.reply ?? '' },
+      ]);
     },
-    [messages, sending]
+    [messages, sending, userProfile]
   );
 
   const handleSend = () => sendMessage(input);
@@ -90,7 +160,17 @@ export default function AssistantScreen() {
           >
             <Text style={styles.backButtonText}>‹ Back</Text>
           </Pressable>
-          <Text style={styles.headerTitle}>AI Assistant</Text>
+
+          <View style={styles.headerCenter}>
+            <View style={styles.rhetorAvatar}>
+              <Text style={styles.rhetorAvatarText}>R</Text>
+            </View>
+            <View style={styles.headerTitleGroup}>
+              <Text style={styles.headerTitle}>Rhetor</Text>
+              <Text style={styles.headerSubtitle}>Your personal college guide</Text>
+            </View>
+          </View>
+
           <View style={styles.headerSpacer} />
         </View>
 
@@ -104,10 +184,13 @@ export default function AssistantScreen() {
           >
             {messages.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyEmoji}>💬</Text>
-                <Text style={styles.emptyTitle}>Ask me anything</Text>
+                <View style={styles.emptyAvatarLarge}>
+                  <Text style={styles.emptyAvatarText}>R</Text>
+                </View>
+                <Text style={styles.emptyTitle}>Hi, I'm Rhetor</Text>
                 <Text style={styles.emptyBody}>
-                  I can help with visas, scholarships, school selection, and campus life.
+                  Your personal guide to U.S. higher education. Ask me anything — I'm here to help you every step of
+                  the way.
                 </Text>
 
                 {STARTER_PROMPTS.map((prompt) => (
@@ -130,6 +213,11 @@ export default function AssistantScreen() {
                     message.role === 'user' ? styles.bubbleRowUser : styles.bubbleRowAssistant,
                   ]}
                 >
+                  {message.role === 'assistant' && (
+                    <View style={styles.assistantAvatarSmall}>
+                      <Text style={styles.assistantAvatarSmallText}>R</Text>
+                    </View>
+                  )}
                   <View style={[styles.bubble, message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant]}>
                     <Text style={[styles.bubbleText, message.role === 'user' && styles.bubbleTextUser]}>
                       {message.content}
@@ -141,6 +229,9 @@ export default function AssistantScreen() {
 
             {sending && (
               <View style={[styles.bubbleRow, styles.bubbleRowAssistant]}>
+                <View style={styles.assistantAvatarSmall}>
+                  <Text style={styles.assistantAvatarSmallText}>R</Text>
+                </View>
                 <View style={[styles.bubble, styles.bubbleAssistant, styles.typingBubble]}>
                   <ActivityIndicator color={theme.textSecondary} size="small" />
                 </View>
@@ -158,7 +249,7 @@ export default function AssistantScreen() {
         <View style={styles.inputRow}>
           <TextInput
             style={styles.input}
-            placeholder="Ask a question..."
+            placeholder="Ask Rhetor anything..."
             placeholderTextColor="rgba(255, 255, 255, 0.5)"
             value={input}
             onChangeText={setInput}
@@ -203,10 +294,37 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: theme.textSecondary,
   },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  rhetorAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: theme.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rhetorAvatarText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0A2463',
+  },
+  headerTitleGroup: {
+    alignItems: 'flex-start',
+  },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: theme.textPrimary,
+    lineHeight: 22,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    lineHeight: 16,
   },
   headerSpacer: {
     minWidth: 60,
@@ -223,14 +341,24 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 40,
+    paddingTop: 32,
   },
-  emptyEmoji: {
-    fontSize: 40,
+  emptyAvatarLarge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: theme.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 16,
   },
+  emptyAvatarText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#0A2463',
+  },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
     color: theme.textPrimary,
     marginBottom: 8,
@@ -261,12 +389,28 @@ const styles = StyleSheet.create({
   bubbleRow: {
     flexDirection: 'row',
     marginBottom: 12,
+    alignItems: 'flex-end',
+    gap: 8,
   },
   bubbleRowUser: {
     justifyContent: 'flex-end',
   },
   bubbleRowAssistant: {
     justifyContent: 'flex-start',
+  },
+  assistantAvatarSmall: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: theme.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  assistantAvatarSmallText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0A2463',
   },
   bubble: {
     maxWidth: '80%',
